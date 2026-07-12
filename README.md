@@ -11,6 +11,73 @@ Unlike typical prototyping projects, this codebase is a battle-hardened solution
 * **Hardware-Agnostic Portability:** Due to intense local grid power surges (PLN fluctuations) and hardware aging in tropical climates, the physical ESP8266 microchips require replacement roughly once a year. This firmware is engineered to be 100% plug-and-play—allowing instant hardware migration without code modification. On boot, the new chip automatically pulls the last state from the cloud and resumes operation seamlessly.
 * **Fault-Tolerant Infrastructure:** Built-in safeguards against sudden power loss, high-frequency voltage spikes, and Wi-Fi router dropouts.
 
+# 📜 Project Background
+
+This project was not developed all at once. It evolved gradually through several years of real-world residential use, with each new feature introduced to solve an actual operational problem.
+
+## Initial Version
+
+The first implementation used **Blynk IoT** for remote control of a 12-channel relay module.
+
+Although the system functioned correctly during normal operation, one limitation became apparent after unexpected power outages.
+
+When electrical power returned, the ESP8266 restarted with all relays in their default state, while the Blynk dashboard could still display the previous relay status. This caused the application and the physical hardware to become temporarily unsynchronized.
+
+---
+
+## Cloud State Recovery
+
+To solve this issue, **ThingSpeak** was integrated into the firmware.
+
+Instead of relying only on the current device state, every relay change is stored in ThingSpeak.
+
+After every reboot, the firmware retrieves the last saved relay configuration from the cloud and restores the relay outputs automatically before normal operation resumes.
+
+This significantly improved system reliability after power interruptions.
+
+---
+
+## Dashboard Synchronization
+
+After restoring relay states, the firmware immediately updates all Blynk Virtual Pins.
+
+This ensures that the Blynk dashboard always reflects the actual hardware status, eliminating mismatched relay indicators after reboot.
+
+---
+
+## Network Reliability
+
+To improve availability, automatic dual Wi-Fi support was added.
+
+If the primary Wi-Fi network becomes unavailable, the firmware automatically attempts to connect to a secondary configured network without user intervention.
+
+---
+
+## Automatic Recovery
+
+Long-term deployment also revealed that unstable Internet connections and temporary cloud outages could occasionally interrupt communication.
+
+Several recovery mechanisms were therefore implemented, including:
+
+- Automatic Wi-Fi reconnection
+- Automatic Blynk reconnection
+- ThingSpeak state restoration
+- Software watchdog restart
+- Periodic connection monitoring
+
+These features allow the controller to recover automatically from most temporary failures.
+
+---
+
+## Long-Term Deployment
+
+The current firmware architecture has been refined through approximately five years of continuous residential operation.
+
+While ESP8266 development boards may occasionally require replacement because of hardware aging or unstable utility power, the firmware itself has remained largely unchanged.
+
+When replacing the hardware, the same firmware can simply be uploaded to a new ESP8266 board. After configuration, the controller automatically reconnects to the cloud services and resumes normal operation.
+
+This development philosophy emphasizes reliability, maintainability, and automatic recovery rather than simply adding new features.
 ---
 
 ## 🛠️ System Architecture & Key Features
