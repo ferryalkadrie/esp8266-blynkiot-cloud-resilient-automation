@@ -1,0 +1,252 @@
+// ====================================================================
+// ⚠️ GITHUB COMMUNITY EDITION - BLYNK IoT CONFIGURATION (MASKED)
+// ====================================================================
+#define BLYNK_TEMPLATE_ID   "TMPLxxxxxx"       // Replace with your Blynk IoT Template ID
+#define BLYNK_TEMPLATE_NAME "YOUR_TEMPLATE"    // Replace with your Blynk IoT Template Name
+#define BLYNK_PRINT Serial
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
+#include <TimeLib.h>
+#include <WidgetRTC.h>
+
+// --- Credential Placeholders ---
+char auth[]  = "YOUR_BLYNK_AUTH_TOKEN";         // Replace with your Blynk IoT Auth Token
+char ssid1[] = "YOUR_PRIMARY_WIFI_SSID";
+char pass1[] = "YOUR_PRIMARY_WIFI_PASSWORD";
+char ssid2[] = "YOUR_BACKUP_WIFI_SSID";
+char pass2[] = "YOUR_BACKUP_WIFI_PASSWORD";
+
+const char* writeAPIKey = "YOUR_THINGSPEAK_WRITE_APIKEY";
+const char* readAPIKey  = "YOUR_THINGSPEAK_READ_APIKEY";
+const char* channelID   = "YOUR_THINGSPEAK_CHANNEL_ID";
+const char* updateURL   = "http://api.thingspeak.com/update";
+
+// --- Hardware Pin Configurations ---
+const int relays[] = {D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, 10, D0};
+const int relayCount = sizeof(relays) / sizeof(relays[0]);
+
+WidgetRTC rtc;
+unsigned long lastSendTS = 0;
+const unsigned long sendInterval = 3600000UL; // 1 Hour periodic telemetry update
+
+// --- Non-Blocking Debounce Variables for ThingSpeak API Limits ---
+unsigned long lastButtonActionMillis = 0;
+const unsigned long minSendInterval = 5000;   // Limit burst requests to maximum once every 5 seconds
+bool needsThingSpeakUpdate = false; 
+
+// --- Connection Health & Recovery System ---
+unsigned long previousCheckMillis = 0;
+const unsigned long checkInterval = 5UL * 60UL * 1000UL; // Healthcheck interval every 5 minutes
+bool restored = false;
+
+// ====================================================================
+// HARDWARE & DATA AUXILIARY FUNCTIONS
+// ====================================================================
+
+void updateBlynkWidgetsFromHardware() {
+  for (int i = 0; i < relayCount; ++i) {
+    int hw = (digitalRead(relays[i]) == LOW) ? 1 : 0; 
+    int vpin = i + 1; 
+    Blynk.virtualWrite(vpin, hw);
+  }
+}
+
+String getRelayStatus() {
+  String s = "";
+  for (int i = 0; i < relayCount; ++i)
+    s += (digitalRead(relays[i]) == LOW) ? '1' : '0';
+  return s;
+}
+
+void setRelayStatus(String s) {
+  for (int i = 0; i < relayCount && i < s.length(); ++i) {
+    if (s[i] == '1') digitalWrite(relays[i], LOW);
+    else digitalWrite(relays[i], HIGH);
+  }
+  updateBlynkWidgetsFromHardware();
+}
+
+// ====================================================================
+// CLOUD BACKUP & RESTORATION MODULES (NON-BLOCKING)
+// ====================================================================
+
+void sendToThingSpeak() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  Serial.print("Sending telemetry to ThingSpeak... ");
+  HTTPClient http;
+  String data = "api_key=" + String(writeAPIKey) + "&field1=" + getRelayStatus();
+  http.begin(updateURL);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = http.POST(data);
+  http.end();
+  Serial.println("Response Code: " + String(code));
+}
+
+void restoreFromThingSpeak() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  Serial.print("Restoring state from ThingSpeak Cloud backup... ");
+  HTTPClient http;
+  String url = String("http://api.thingspeak.com/channels/") + channelID + "/fields/1/last.json?api_key=" + readAPIKey;
+  http.begin(url);
+  int code = http.GET();
+  if (code == 200) {
+    String payload = http.getString();
+    DynamicJsonDocument doc(512);
+    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
+      String last = doc["field1"] | "";
+      Serial.println("Success. Restored State: " + last);
+      if (last.length()) setRelayStatus(last);
+    } else {
+      Serial.println("JSON Deserialization Failed.");
+    }
+  } else {
+    Serial.println("Failed, HTTP Code: " + String(code));
+  }
+  http.end();
+}
+
+// ====================================================================
+// BLYNK INTERACTION DRIVERS
+// ====================================================================
+
+void updateRelayAndFlag(int pin, int v) {
+  digitalWrite(pin, v ? LOW : HIGH);
+  Blynk.virtualWrite(V1 + (pin - D1), v); 
+  needsThingSpeakUpdate = true; 
+  lastButtonActionMillis = millis(); 
+}
+
+BLYNK_WRITE(V1)  { updateRelayAndFlag(D1, param.asInt()); }
+BLYNK_WRITE(V2)  { updateRelayAndFlag(D2, param.asInt()); }
+BLYNK_WRITE(V3)  { updateRelayAndFlag(D3, param.asInt()); }
+BLYNK_WRITE(V4)  { updateRelayAndFlag(D4, param.asInt()); }
+BLYNK_WRITE(V5)  { updateRelayAndFlag(D5, param.asInt()); }
+BLYNK_WRITE(V6)  { updateRelayAndFlag(D6, param.asInt()); }
+BLYNK_WRITE(V7)  { updateRelayAndFlag(D7, param.asInt()); }
+BLYNK_WRITE(V8)  { updateRelayAndFlag(D8, param.asInt()); }
+BLYNK_WRITE(V9)  { updateRelayAndFlag(D9, param.asInt()); }
+BLYNK_WRITE(V10) { updateRelayAndFlag(D10, param.asInt()); }
+BLYNK_WRITE(V11) { updateRelayAndFlag(10, param.asInt()); } 
+BLYNK_WRITE(V12) { updateRelayAndFlag(D0, param.asInt()); }
+
+// ====================================================================
+// NETWORK MANAGEMENT & HARDWARE WATCHDOG
+// ====================================================================
+
+void connectToWiFi() {
+  WiFi.begin(ssid1, pass1);
+  Serial.print("Connecting to Primary SSID: " + String(ssid1));
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+    delay(200);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(ssid2, pass2);
+    Serial.print("\nPrimary Failed. Switching to Backup SSID: " + String(ssid2));
+    start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+      delay(200);
+      Serial.print(".");
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi Connected. IP: " + WiFi.localIP().toString());
+    configTime(0, 0, "pool.ntp.org");
+    delay(500);
+  } else {
+    Serial.println("\n❌ Network connection failed entirely.");
+  }
+}
+
+void watchdogResetIfHang() {
+  static unsigned long lastAlive = millis();
+  static unsigned long lastCheck = millis();
+
+  if (Blynk.connected() || WiFi.status() == WL_CONNECTED) {
+    lastAlive = millis();
+  }
+  
+  if (millis() - lastCheck > 10000) { 
+    lastCheck = millis();
+    if (millis() - lastAlive > 60000) { 
+      Serial.println("⚠ System unresponsive > 60s. Activating software-level hardware reset...");
+      delay(500); 
+      ESP.restart();
+    }
+  }
+}
+
+// ====================================================================
+// ARDUINO CORE SETUP & EXECUTION LOOP
+// ====================================================================
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Initializing Multichannel Smart Automation System...");
+  
+  for (int i = 0; i < relayCount; i++){
+    pinMode(relays[i], OUTPUT);
+    digitalWrite(relays[i], HIGH); // Keep all relays safely disconnected on boot
+  }
+  
+  connectToWiFi();
+
+  // Non-blocking Blynk cloud handshaking initialization (Blynk IoT Server v2)
+  Blynk.config(auth, "blynk.cloud", 80);
+  Blynk.connect(5000); 
+  rtc.begin();
+
+  if (Blynk.connected()) {
+    restoreFromThingSpeak();
+    restored = true;
+  } else {
+    Serial.println("Blynk cloud unreachable on initialization. Queued for runtime recovery.");
+    restored = false;
+  }
+
+  lastSendTS = millis();
+}
+
+void loop() {
+  if (Blynk.connected()) Blynk.run();
+  
+  // Periodic backup engine (1 hour intervals)
+  if (millis() - lastSendTS >= sendInterval) {
+    lastSendTS = millis();
+    sendToThingSpeak();
+    needsThingSpeakUpdate = false; 
+  }
+  
+  // Event-driven state sync engine (Debounced under 5s limits)
+  if (needsThingSpeakUpdate && millis() - lastButtonActionMillis >= minSendInterval) {
+    lastButtonActionMillis = millis();
+    sendToThingSpeak(); 
+    needsThingSpeakUpdate = false;
+  }
+
+  // Network self-healing monitor (Checks every 5 minutes)
+  if (millis() - previousCheckMillis >= checkInterval) {
+    previousCheckMillis = millis();
+    if (!Blynk.connected()) {
+      Serial.println("Connection dropped. Executing automated network recovery...");
+      connectToWiFi();
+      Blynk.config(auth, "blynk.cloud", 80);
+      Blynk.connect(5000); 
+      restored = false;
+    } 
+    
+    if (Blynk.connected() && !restored) {
+      restoreFromThingSpeak();
+      restored = true;
+    }
+  }
+
+  watchdogResetIfHang(); 
+  delay(100);
+}
