@@ -1,39 +1,76 @@
-# 💡 Automated Multichannel Lighting System with Cloud Resilience
+# 💡 Automated Multichannel Smart Home Automation with Cloud State Resilience
 
-An ultra-reliable, long-term deployed smart automation system powered by an ESP8266 controller, natively integrated with the Blynk IoT v2 platform and backended by ThingSpeak for cloud state restoration.
+An industrial-grade, long-term deployed smart automation system powered by an ESP8266 controller. This system is natively integrated with the modern **Blynk IoT v2** platform for real-time remote control and backed by **ThingSpeak Cloud Analytics** for asynchronous state logging and full disaster recovery restoration.
+
+---
 
 ## 📊 Long-Term Deployment & Environmental Resilience
-This codebase is not a mere proof-of-concept; it is a battle-hardened solution built for unstable real-world environments.
+Unlike typical prototyping projects, this codebase is a battle-hardened solution engineered for unstable, real-world electrical and environmental conditions.
 
-- **5-Year Logic Stability:** The core control logic, state syncing, and software architecture have been running flawlessly in a residential installation for **5 consecutive years**.
-- **Hardware-Agnostic Portability:** Due to intense regional power surges (local grid fluctuations / PLN instability) and hardware component aging, the physical ESP8266 units require replacement roughly once a year. However, this firmware has proven to be 100% plug-and-play, completely self-recovering state values instantly on new modules without code modifications.
-- **Fault-Tolerant Infrastructure:** Engineered with dual-SSID automated rollover, asynchronous state cloud backups, and a software-driven watchdog mechanism to completely mitigate local connection hang-ups.
+* **5-Year Production Proven:** The core control logic, state-syncing mechanisms, and network self-healing subroutines have been running flawlessly in a residential installation for **5 consecutive years** (since Day 1 of the property's grid/PLN integration).
+* **Hardware-Agnostic Portability:** Due to intense local grid power surges (PLN fluctuations) and hardware aging in tropical climates, the physical ESP8266 microchips require replacement roughly once a year. This firmware is engineered to be 100% plug-and-play—allowing instant hardware migration without code modification. On boot, the new chip automatically pulls the last state from the cloud and resumes operation seamlessly.
+* **Fault-Tolerant Infrastructure:** Built-in safeguards against sudden power loss, high-frequency voltage spikes, and Wi-Fi router dropouts.
 
-## 🛠️ Key Architectural Strengths
-- **Dual-SSID Network Recovery:** Automatically alternates between primary and backup wireless access points to prevent isolation.
-- **Asynchronous Cloud State Restore:** If a sudden power spike or blackout causes a hardware reset, the controller automatically queries the latest known stable array configuration from the ThingSpeak cloud database during boot.
-- **Anti-Lockup Watchdog:** A built-in logical supervisor automatically reboots the microchip if cloud or socket routines stall for more than 60 seconds.
+---
 
-## 🚀 Quick Setup Guide (Blynk IoT & Hardware)
+## 🛠️ System Architecture & Key Features
 
-To deploy this firmware on your own ESP8266 module, follow these configuration steps:
+### 1. Dual-SSID Network Self-Healing Engine
+The system contains an automated network rollover routine. If the primary Wi-Fi access point (`ssid1`) fails or drops connection during storm conditions, the firmware instantly detects the drop within its health-check interval and switches to the backup access point (`ssid2`), maintaining 99.9% uptime.
 
-### 1. Blynk IoT Cloud Configuration
-1. Log in to your **Blynk IoT Web Dashboard**.
-2. Create a new **Template** (e.g., named "Multi-Channel Automation").
-3. Go to the **Datastreams** tab and create 12 Virtual Pins (**V1 to V12**) as *Integer* types (Min: 0, Max: 1) to control the 12 relays.
-4. Copy the `BLYNK_TEMPLATE_ID` and `BLYNK_TEMPLATE_NAME` from the info page and paste them into the very top of the `.ino` file.
-5. Create a new **Device** from your template to obtain your unique `BLYNK_AUTH_TOKEN`.
+### 2. Cloud State Backup & Restoration (Disaster Recovery)
+To prevent the relays from resetting to an undesirable state after a local blackout or unexpected hardware reboot, the controller saves its current 12-channel relay matrix as a binary string (e.g., `101100111100`) directly to ThingSpeak. Upon reboot, the system handles an asynchronous REST API call to fetch this string and restore the house's lights back to their exact pre-blackout state.
 
-### 2. Arduino IDE Environment Setup
-Make sure you have the following libraries installed via the Library Manager before compiling:
-- `Blynk` (Latest version supporting Blynk IoT v2)
-- `ArduinoJson` (v6.x or later)
-- `Time` (by Michael Margolis)
+### 3. Non-Blocking Debounce & API Rate Limiting
+ThingSpeak imposes a strict rate limit on data updates. The firmware utilizes an event-driven, non-blocking interval supervisor (`minSendInterval = 5000`) to queue rapid physical button presses on the Blynk App and broadcast them safely without causing buffer overflows or getting blocked by the cloud server.
 
-### 3. Deployment
-- Open the code, change the network placeholders with your local primary/backup Wi-Fi credentials and ThingSpeak API keys.
-- Flash the code to your ESP8266. The system will automatically handle the rest, including full state recovery on boot!
+### 4. Hardware/Software Anti-Lockup Watchdog
+Microcontrollers operating 24/7 can stall due to memory leaks or infinity loops caused by unresponsive socket handshakes. The built-in supervisor monitor tracks network responsiveness; if the system hangs or remains disconnected for more than 60 seconds, it forces a hard software-level hardware reset (`ESP.restart()`).
 
-## 💎 Project Editions
-This repository contains the **Community Edition**. For deployment-ready commercial smart building integration solutions featuring hardware-isolated optocouplers, snubber protection circuits, and industrial-grade power conditioners, please reach out to the author.
+---
+
+## 📌 Hardware Pin Mapping & Matrix Configuration
+
+The firmware controls a 12-channel isolated relay module mapped across the ESP8266 GPIO layout as follows:
+
+| Virtual Pin (Blynk v2) | Physical Hardware Pin (ESP8266) | System Load Description | Default Boot State |
+| :---: | :---: | :--- | :---: |
+| **V1** | `D1` | Relay Channel 1 (Main Lights) | HIGH (OFF) |
+| **V2** | `D2` | Relay Channel 2 (Living Room) | HIGH (OFF) |
+| **V3** | `D3` | Relay Channel 3 (Kitchen Lights) | HIGH (OFF) |
+| **V4** | `D4` | Relay Channel 4 (Outdoor Fence) | HIGH (OFF) |
+| **V5** | `D5` | Relay Channel 5 (Bedroom 1) | HIGH (OFF) |
+| **V6** | `D6` | Relay Channel 6 (Bedroom 2) | HIGH (OFF) |
+| **V7** | `D7` | Relay Channel 7 (Bathroom) | HIGH (OFF) |
+| **V8** | `D8` | Relay Channel 8 (Backyard) | HIGH (OFF) |
+| **V9** | `D9` | Relay Channel 9 (Auxiliary 1) | HIGH (OFF) |
+| **V10** | `D10` | Relay Channel 10 (Auxiliary 2) | HIGH (OFF) |
+| **V11** | `10` (GPIO10) | Relay Channel 11 (Reserved) | HIGH (OFF) |
+| **V12** | `D0` | Relay Channel 12 (Master Power Switch) | HIGH (OFF) |
+
+---
+
+## 🚀 Step-by-Step Installation & Configuration Guide
+
+### 1. Blynk IoT Cloud Setup
+1. Log in to your **Blynk IoT Console**.
+2. Create a new **Template** named `Smart Multi-Channel Automation`.
+3. Navigate to the **Datastreams** tab and add 12 Virtual Pins (`V1` to `V12`) with the data type set to **Integer** (Min: `0`, Max: `1`).
+4. Copy the auto-generated `BLYNK_TEMPLATE_ID` and `BLYNK_TEMPLATE_NAME` from the template info dashboard.
+5. Create a new **Device** from the template to acquire your unique `BLYNK_AUTH_TOKEN`.
+
+### 2. ThingSpeak Setup
+1. Create a channel on **ThingSpeak**.
+2. Enable **Field 1** to store the 12-bit string of your relay states.
+3. Note down your **Channel ID**, **Write API Key**, and **Read API Key**.
+
+### 3. Firmware Compilation
+1. Open `Blynk_Home_Lighting.ino` inside the Arduino IDE.
+2. Ensure you have installed the following required libraries via the Library Manager:
+   * **Blynk** (Latest Version supporting IoT v2)
+   * **ArduinoJson** (v6.x or newer)
+   * **Time** (by Michael Margolis)
+3. Paste your template credentials at the very top of the script:
+   ```cpp
+   #define BLYNK_TEMPLATE_ID   "YOUR_TEMPLATE_ID"
+   #define BLYNK_TEMPLATE_NAME "YOUR_TEMPLATE_NAME"
